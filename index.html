@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#12284B">
+<title>Campus Navigator</title>
+<style>
+  :root {
+    --sky: #12284B;        /* deep evening blue, page ground */
+    --paving: #FFD23F;     /* tactile-paving yellow, the one bold thing */
+    --paving-press: #E6B92E;
+    --stop: #D9412B;
+    --ink: #FFFFFF;
+    --ink-on-paving: #12284B;
+    --muted: #B7C3D6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--sky);
+    color: var(--ink);
+    /* System font: respects the user's own accessibility text settings */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header {
+    padding: 16px 20px 8px;
+  }
+  h1 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.01em;
+  }
+  #status {
+    min-height: 5.5rem;
+    padding: 12px 20px 16px;
+    font-size: 1.4rem;
+    line-height: 1.35;
+    font-weight: 500;
+  }
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 12px 12px;
+  }
+  .big {
+    flex: 1;
+    width: 100%;
+    border: 0;
+    border-radius: 18px;
+    background: var(--paving);
+    color: var(--ink-on-paving);
+    font: inherit;
+    font-size: clamp(1.6rem, 6vw, 2.2rem);
+    font-weight: 700;
+    line-height: 1.2;
+    padding: 16px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .big:active { background: var(--paving-press); }
+  .big:focus-visible { outline: 4px solid var(--ink); outline-offset: 3px; }
+  .big.stop { background: var(--stop); color: var(--ink); }
+  .big.stop:active { filter: brightness(0.9); }
+
+  #picker {
+    position: fixed; inset: 0;
+    background: var(--sky);
+    display: none;
+    flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #picker.open { display: flex; }
+  #picker header { padding: 16px 20px; }
+  #picker h2 { font-size: 1.5rem; font-weight: 700; }
+  #list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .dest {
+    width: 100%;
+    min-height: 84px;
+    border: 3px solid var(--paving);
+    border-radius: 16px;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 1.5rem;
+    font-weight: 600;
+    text-align: left;
+    padding: 16px 20px;
+    cursor: pointer;
+  }
+  .dest:active { background: rgba(255,210,63,0.18); }
+  .dest:focus-visible { outline: 4px solid var(--ink); outline-offset: 2px; }
+  #back {
+    margin: 12px;
+    min-height: 72px;
+    border: 0;
+    border-radius: 16px;
+    background: var(--paving);
+    color: var(--ink-on-paving);
+    font: inherit;
+    font-size: 1.4rem;
+    font-weight: 700;
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  #guardVideo {
+    position: fixed;
+    top: 0; right: 0;
+    width: 1px; height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  #guardVideo.visible {
+    top: env(safe-area-inset-top, 0px);
+    right: env(safe-area-inset-right, 0px);
+    width: 96px; height: 72px;
+    opacity: 1;
+    border: 2px solid var(--paving);
+    border-radius: 8px;
+    z-index: 10;
+  }
+  .big.guard-on { background: var(--stop); color: var(--ink); }
+
+  /* Live list of detected objects + estimated distance (visual only;
+     the voice alerts are the accessible channel, so this isn't live-read) */
+  #detections {
+    display: none;
+    padding: 0 20px 12px;
+    font-size: 1.15rem;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+  #detections.visible { display: block; }
+  #detections .inpath { color: var(--paving); font-weight: 700; }
+  #detections .danger { color: #FF8A7A; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<header><h1>Campus Navigator</h1></header>
+<div id="status" role="status" aria-live="polite">Press a button to begin.</div>
+<div id="detections" aria-hidden="true"></div>
+
+<video id="guardVideo" playsinline muted></video>
+
+<main>
+  <button class="big" id="btnWhere">Where am I</button>
+  <button class="big" id="btnChoose">Choose destination</button>
+  <button class="big" id="btnGuard">Proximity alert</button>
+  <button class="big stop" id="btnStop">Stop navigation</button>
+</main>
+
+<section id="picker" role="dialog" aria-modal="true" aria-labelledby="pickerTitle">
+  <header><h2 id="pickerTitle">Choose destination</h2></header>
+  <div id="list"></div>
+  <button id="back">Back</button>
+</section>
+
+<script>
+// ---------------------------------------------------------------
+// CAMPUS MAP  — your surveyed coordinates. Add the main gate here.
+// ---------------------------------------------------------------
+const CAMPUS = [
+  { name: 'Instrumentation',           lat: 12.947479, lon: 80.139441 },
+  { name: 'DOHM',                      lat: 12.947800, lon: 80.139718 },
+  { name: 'Admin Block',               lat: 12.947817, lon: 80.139529 },
+  { name: 'Electronics Block 2',       lat: 12.947468, lon: 80.139497 },
+  { name: 'IT Department',             lat: 12.948117, lon: 80.139876 },
+  { name: 'Abdul Kalam Lecture Hall',  lat: 12.948136, lon: 80.139840 },
+  { name: 'Rajam Lecture Hall',        lat: 12.948453, lon: 80.140104 },
+  { name: 'IoT Block',                 lat: 12.948497, lon: 80.140140 },
+  { name: 'Electronics New',           lat: 12.948534, lon: 80.140137 },
+  { name: 'Electronics Old',           lat: 12.948542, lon: 80.140215 },
+  { name: 'Applied Science',           lat: 12.949438, lon: 80.140932 },
+  { name: 'Hanger 1',                  lat: 12.949988, lon: 80.141152 },
+  { name: 'Hanger 2',                  lat: 12.949097, lon: 80.140584 },
+];
+
+// Written by walking each route. Tactile landmarks, not step counts.
+const ENTRANCE = {
+  'Admin Block':
+    'The entrance is not in front of you. Turn right and follow the wall ' +
+    'until it opens into an archway. Four steps up, handrail on the right.',
+};
+
+// ---------------------------------------------------------------
+// GEOMETRY
+// ---------------------------------------------------------------
+const rad = d => d * Math.PI / 180;
+
+function distanceM(lat1, lon1, lat2, lon2) {
+  const R = 6371000, p1 = rad(lat1), p2 = rad(lat2);
+  const dp = rad(lat2 - lat1), dl = rad(lon2 - lon1);
+  const a = Math.sin(dp/2)**2 + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function bearingDeg(lat1, lon1, lat2, lon2) {
+  const p1 = rad(lat1), p2 = rad(lat2), dl = rad(lon2 - lon1);
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1)*Math.sin(p2) - Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+function relativeDirection(heading, brg) {
+  const diff = (brg - heading + 360) % 360;
+  if (diff < 20 || diff > 340) return 'straight ahead';
+  if (diff < 160) return 'on your right';
+  if (diff > 200) return 'on your left';
+  return 'behind you';
+}
+
+function nearest(lat, lon) {
+  let best = null, bestD = Infinity;
+  for (const b of CAMPUS) {
+    const d = distanceM(lat, lon, b.lat, b.lon);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  return { building: best, d: bestD };
+}
+
+const round5 = d => Math.round(d / 5) * 5;
+
+// ---------------------------------------------------------------
+// VOICE  — text-to-speech with iOS Safari workarounds
+// ---------------------------------------------------------------
+// iOS Safari requires speechSynthesis to be triggered from a user
+// gesture at least once before it will work from timers/callbacks.
+// We warm it up silently on the very first tap anywhere on the page.
+// We also add a 60 ms delay after cancel() because calling
+// cancel()+speak() in the same tick on iOS can silently drop the new
+// utterance, and an onstart resume() guard to unstick iOS when it
+// pauses mid-sentence (a known WebKit bug with long phrases).
+// ---------------------------------------------------------------
+const statusEl = document.getElementById('status');
+let lastSpoken  = null;
+let ttsReady    = false;
+let speakTimer  = null;
+
+function warmUpTTS() {
+  if (ttsReady || !('speechSynthesis' in window)) return;
+  ttsReady = true;
+  const silent = new SpeechSynthesisUtterance('');
+  silent.volume = 0;
+  speechSynthesis.speak(silent);
+}
+// Prime on every user tap so the first real alert never gets blocked
+document.addEventListener('click', warmUpTTS);
+document.addEventListener('touchstart', warmUpTTS, { passive: true });
+
+// `display` lets the screen show more detail (e.g. the distance in metres)
+// than is spoken aloud. Defaults to the spoken text.
+function speak(text, force = false, display = text) {
+  if (!force && text === lastSpoken) return;
+  lastSpoken = text;
+
+  // Always update the on-screen status text immediately — even if audio
+  // is blocked the sighted user / developer can read what was "said"
+  statusEl.textContent = display;
+
+  if (!('speechSynthesis' in window)) return;
+
+  // Cancel any current speech, then wait one tick so the cancel
+  // completes before we enqueue the new utterance
+  speechSynthesis.cancel();
+  if (speakTimer) { clearTimeout(speakTimer); speakTimer = null; }
+
+  speakTimer = setTimeout(() => {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang   = 'en-IN';   // Indian English voice when available
+    u.rate   = 0.92;      // slightly slower than default — clearer for a blind user
+    u.pitch  = 1.0;
+    u.volume = 1.0;
+
+    // iOS sometimes pauses mid-sentence; resume() unsticks it
+    u.onstart = () => {
+      setTimeout(() => {
+        try { if (speechSynthesis.paused) speechSynthesis.resume(); } catch (_) {}
+      }, 400);
+    };
+
+    // If the utterance errors (happens on some Android WebViews),
+    // retry once with a shorter text so at least the key word is heard
+    u.onerror = (e) => {
+      if (e.error === 'interrupted') return;   // cancelled intentionally — ignore
+      try {
+        const fallback = new SpeechSynthesisUtterance(text.split('.')[0]);
+        fallback.lang = 'en-US';
+        speechSynthesis.speak(fallback);
+      } catch (_) {}
+    };
+
+    speechSynthesis.speak(u);
+  }, 60);
+}
+
+// ---------------------------------------------------------------
+// COMPASS
+// iPhone gives webkitCompassHeading; Android gives alpha (absolute).
+// iPhone also requires permission, and only from a button tap.
+// ---------------------------------------------------------------
+let heading = null;
+let compassStarted = false;
+
+function onOrientation(e) {
+  if (typeof e.webkitCompassHeading === 'number') {
+    heading = e.webkitCompassHeading;
+  } else if (e.absolute && e.alpha != null) {
+    heading = (360 - e.alpha) % 360;
+  }
+}
+
+async function startCompass() {
+  if (compassStarted) return;
+  compassStarted = true;
+  const DOE = window.DeviceOrientationEvent;
+  if (DOE && typeof DOE.requestPermission === 'function') {
+    try {
+      const r = await DOE.requestPermission();
+      if (r !== 'granted') return;
+    } catch (_) { return; }
+    window.addEventListener('deviceorientation', onOrientation, true);
+  } else if ('ondeviceorientationabsolute' in window) {
+    window.addEventListener('deviceorientationabsolute', onOrientation, true);
+  } else {
+    window.addEventListener('deviceorientation', onOrientation, true);
+  }
+}
+
+// ---------------------------------------------------------------
+// GPS
+// ---------------------------------------------------------------
+const GPS_OPTS = { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 };
+
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    if (!('geolocation' in navigator)) return reject(new Error('no-geo'));
+    navigator.geolocation.getCurrentPosition(resolve, reject, GPS_OPTS);
+  });
+}
+
+function gpsErrorMessage(err) {
+  if (!err) return 'Location unavailable.';
+  if (err.code === 1) return 'Location permission is needed. Please allow location for this page.';
+  if (err.code === 3) return 'Location timed out. Move to open sky and try again.';
+  return 'Location unavailable.';
+}
+
+// ---------------------------------------------------------------
+// WHERE AM I
+// ---------------------------------------------------------------
+async function whereAmI() {
+  startCompass();
+  speak('Finding your location.', true);
+  let pos;
+  try { pos = await getPosition(); }
+  catch (e) { speak(gpsErrorMessage(e), true); return; }
+
+  const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+  const { building, d } = nearest(lat, lon);
+
+  if (accuracy > 25) {
+    speak(`GPS signal is weak. Nearest is probably ${building.name}, ` +
+          `about ${round5(d)} metres away.`, true);
+    return;
+  }
+
+  // Two buildings within GPS error of each other -> don't guess, name both
+  const sorted = CAMPUS
+    .map(b => ({ b, dist: distanceM(lat, lon, b.lat, b.lon) }))
+    .sort((x, y) => x.dist - y.dist);
+  if (sorted.length > 1 && d < 20 &&
+      (sorted[1].dist - sorted[0].dist) < Math.max(accuracy, 8)) {
+    speak(`You are near ${sorted[0].b.name} or ${sorted[1].b.name}. ` +
+          `GPS cannot tell them apart here.`, true);
+    return;
+  }
+
+  if (d < 15) {
+    speak(`You are at ${building.name}.`, true);
+  } else if (heading != null) {
+    const side = relativeDirection(heading, bearingDeg(lat, lon, building.lat, building.lon));
+    speak(`Nearest is ${building.name}, about ${round5(d)} metres, ${side}.`, true);
+  } else {
+    speak(`Nearest is ${building.name}, about ${round5(d)} metres away.`, true);
+  }
+}
+
+// ---------------------------------------------------------------
+// NAVIGATE TO
+// ---------------------------------------------------------------
+let destination = null;
+let watchId = null;
+let lastBand = null;
+let wakeLock = null;
+
+async function keepScreenOn() {
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }
+  catch (_) {}
+}
+function releaseScreen() {
+  try { wakeLock && wakeLock.release(); } catch (_) {}
+  wakeLock = null;
+}
+
+function startNavigation(dest) {
+  startCompass();
+  destination = dest;
+  lastBand = null;
+  lastSpoken = null;
+  speak(`Navigating to ${dest.name}.`, true);
+  keepScreenOn();
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  watchId = navigator.geolocation.watchPosition(onPosition,
+    err => speak(gpsErrorMessage(err), true), GPS_OPTS);
+  document.getElementById('btnChoose').textContent = `Going to ${dest.name}`;
+}
+
+function onPosition(pos) {
+  if (!destination) return;
+  const { latitude: lat, longitude: lon } = pos.coords;
+  const d = distanceM(lat, lon, destination.lat, destination.lon);
+
+  if (d < 6) {
+    const entrance = ENTRANCE[destination.name] || 'Use your cane to locate the entrance.';
+    speak(`You have reached ${destination.name}. ${entrance}`, true);
+    stopNavigation(false);
+    return;
+  }
+
+  const band = d < 15 ? 'very close' : d < 50 ? 'close' : d < 100 ? 'approaching' : 'far';
+  if (band !== lastBand) {
+    lastBand = band;
+    if (heading != null) {
+      const side = relativeDirection(heading, bearingDeg(lat, lon, destination.lat, destination.lon));
+      speak(`${destination.name}, ${round5(d)} metres, ${side}.`, true);
+    } else {
+      speak(`${destination.name}, ${round5(d)} metres away.`, true);
+    }
+  }
+}
+
+function stopNavigation(announce = true) {
+  if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  destination = null;
+  lastBand = null;
+  releaseScreen();
+  document.getElementById('btnChoose').textContent = 'Choose destination';
+  if (announce) speak('Navigation stopped.', true);
+}
+
+// ---------------------------------------------------------------
+// DESTINATION PICKER
+// ---------------------------------------------------------------
+const picker = document.getElementById('picker');
+const list = document.getElementById('list');
+
+for (const b of CAMPUS) {
+  const btn = document.createElement('button');
+  btn.className = 'dest';
+  btn.textContent = b.name;
+  btn.addEventListener('click', () => { closePicker(); startNavigation(b); });
+  list.appendChild(btn);
+}
+
+function openPicker() {
+  startCompass();
+  picker.classList.add('open');
+  speak('Choose a destination. Swipe through the list and double tap to select.', true);
+  list.querySelector('button').focus();
+}
+function closePicker() {
+  picker.classList.remove('open');
+  document.getElementById('btnChoose').focus();
+}
+
+// ---------------------------------------------------------------
+// WIRING
+// ---------------------------------------------------------------
+document.getElementById('btnWhere').addEventListener('click', whereAmI);
+document.getElementById('btnChoose').addEventListener('click', openPicker);
+document.getElementById('btnStop').addEventListener('click', () => { stopNavigation(true); stopGuard(false); });
+document.getElementById('back').addEventListener('click', closePicker);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && destination) keepScreenOn();
+});
+
+// ---------------------------------------------------------------
+// PROXIMITY GUARD — person, car, bicycle, truck and dog ONLY
+// Uses the rear camera + an in-browser object detector. The detector
+// knows all 80 COCO classes, but everything except the five in
+// TARGET_CLASSES is dropped straight after detection: never tracked,
+// displayed or spoken.
+//
+// Voice rules — only for objects in the forward path (bounding-box
+// centre inside the middle CENTRAL_ZONE of the frame):
+//   distance >  DANGER_DISTANCE_M (2 m): presence only — "Car ahead."
+//   distance <= DANGER_DISTANCE_M      : safety warning + side to step to,
+//                                        from the left/right obstacle analysis
+//     "Car 1.5 metres ahead, coming towards you, move left."
+//        only when frame-to-frame tracking shows the gap closing faster
+//        than the user's own movement (phone motion sensors) can explain;
+//     "Car 1.5 metres ahead, very close to you, move left."
+//        otherwise — user walking/turning, no motion sensors, or not
+//        enough tracking history to be sure the object itself is moving.
+// Every alert is rate-limited (cooldowns below) so it isn't repeated
+// every frame; it repeats sooner only if the situation changes
+// significantly (new object, safer side flips, or it got much closer).
+//
+// Detector note: this runs coco-ssd (a MobileNet-SSD detector trained on
+// the same 80-class COCO dataset YOLO models use), not a literal YOLO
+// network. A real YOLOv8 pass in-browser needs hosting exported model
+// weights plus custom letterbox/NMS decoding that can't be verified
+// without a live camera to test against — a bug there would fail
+// silently for a safety feature. coco-ssd is an officially-published,
+// battle-tested pretrained COCO model that gets the same "which COCO
+// classes are in frame" result reliably. Swap in a real YOLOv8-tfjs
+// export later if you want, once you can test it live.
+//
+// Distance in metres uses the pinhole-camera relation
+//   distance = realObjectHeight x focalLengthPx / boxHeightPx
+// There's no calibrated focal length in a browser, so it's derived from
+// an assumed camera field of view (CAMERA_FOV_LONG_SIDE_DEG). Treat the
+// metres as approximate (roughly +/-30%). To calibrate for your phone:
+// stand a known distance (e.g. 3 m) from a person and adjust the FOV
+// until the on-screen reading matches.
+// ---------------------------------------------------------------
+
+// The only classes the guard reacts to. h / w = typical real height /
+// narrowest real width in metres (w is used only when the box is cut
+// off at the top/bottom of the frame — see estimateDistanceM).
+const TARGET_CLASSES = {
+  person:  { label: 'Person',  h: 1.70, w: 0.50 },
+  car:     { label: 'Car',     h: 1.50, w: 1.80 },
+  bicycle: { label: 'Bicycle', h: 1.05, w: 0.60 },
+  truck:   { label: 'Truck',   h: 3.00, w: 2.40 },
+  dog:     { label: 'Dog',     h: 0.60, w: 0.30 },
+};
+
+const DANGER_DISTANCE_M        = 2.0;   // at or within this -> danger warning
+const DANGER_HYSTERESIS_M      = 0.3;   // must go past 2.3 m to leave danger (stops flicker)
+const CENTRAL_ZONE             = 0.50;  // forward path = middle 50% of frame width
+const CAMERA_FOV_LONG_SIDE_DEG = 65;    // typical phone rear camera; tune per phone
+const DETECT_MIN_SCORE         = 0.5;
+const DETECT_MAX_BOXES         = 20;
+const GUARD_DETECT_INTERVAL_MS = 200;
+
+// Alert frequency
+const DANGER_COOLDOWN_MS       = 4000;  // repeat an unchanged danger warning at most this often
+const DANGER_MIN_GAP_MS        = 1500;  // even a changed warning waits this long after the last one
+const SIGNIFICANT_DIST_DROP_M  = 0.7;   // re-warn early if the object got this much closer
+const SIDE_SWITCH_MARGIN       = 0.25;  // other side must be 25% freer before "move" side flips
+const PRESENCE_COOLDOWN_MS     = 10000; // "Car ahead." at most once per class in this window
+const PRESENCE_QUIET_AFTER_DANGER_MS = 3000; // don't talk over a danger warning
+
+// Tracking across consecutive frames
+const TRACK_MATCH_MIN_IOU      = 0.2;   // box overlap needed to be "the same object"
+const TRACK_MAX_AGE_MS         = 1000;  // drop a track unseen for this long
+const TRACK_WINDOW_MS          = 1500;  // distance history used for closing speed
+const TRACK_MIN_SAMPLES        = 4;
+const TRACK_MIN_SPAN_MS        = 600;
+const DIST_SMOOTHING           = 0.5;   // EMA weight of each new distance measurement
+
+// Deciding whether the OBJECT (not the user) is moving toward the user
+const OBJECT_APPROACH_MIN_MPS  = 0.6;   // closing speed attributable to the object
+const USER_WALK_MAX_MPS        = 1.8;   // brisk walking pace
+const EGO_WINDOW_MS            = 1000;
+const EGO_WALK_ACCEL_RMS       = 0.8;   // m/s^2 linear accel RMS above this -> user walking
+const EGO_TURN_DEG_S           = 25;    // rotation rate above this -> phone turning/panning
+
+const guardVideo = document.getElementById('guardVideo');
+const detectionsEl = document.getElementById('detections');
+let guardActive = false;
+let guardModel = null;
+let guardStream = null;
+let guardTimer = null;
+let guardBusy = false;
+let guardScriptsLoaded = false;
+let tracks = [];
+let lastDangerSpokenAt = 0;
+let lastPresenceAt = {};
+
+// Stair detection state (see STAIRS section below)
+let stairsModel = null;
+let stairsIn = null;          // { rgb: index, edge: index, size }
+let stairsTickCount = 0;
+let stairsVotes = [];
+let stairsState = null;       // { kind: 'up' | 'down', conf } while stairs are confirmed
+let lastStairsKind = null;
+let lastStairsSpokenAt = 0;
+
+function resetGuardHistory() {
+  tracks = [];
+  lastDangerSpokenAt = 0;
+  lastPresenceAt = {};
+  stairsTickCount = 0;
+  stairsVotes = [];
+  stairsState = null;
+  lastStairsKind = null;
+  lastStairsSpokenAt = 0;
+}
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(s);
+  });
+}
+
+async function ensureGuardScripts() {
+  if (guardScriptsLoaded) return;
+  await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js');
+  await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js');
+  guardScriptsLoaded = true;
+}
+
+// ---------------------------------------------------------------
+// STAIRS — ascending / descending stair detection
+// A two-branch edge-guided CNN (stairs_model.tflite): one branch sees the
+// RGB frame, the other a Canny edge map of the same frame. Output is one
+// sigmoid: probability of DESCENDING stairs (0 = ascending, 1 = descending).
+// The model has no "no stairs" class, so it always leans one way; to avoid
+// false alarms an alert needs a confident, repeated result across frames.
+// The file must be served next to this page over http(s) (not file://).
+// ---------------------------------------------------------------
+const STAIRS_MODEL_URL     = 'stairs_model.tflite';
+const STAIRS_MIN_CONF      = 0.85;   // a frame only "votes" above this confidence
+const STAIRS_VOTE_WINDOW   = 5;      // last N votes considered ...
+const STAIRS_VOTES_NEEDED  = 4;      // ... and this many must agree
+const STAIRS_EVERY_N_TICKS = 2;      // run every 2nd detection tick (~400 ms)
+const STAIRS_MIN_GAP_MS    = 3000;   // minimum gap between stair announcements
+const STAIRS_REPEAT_MS     = 10000;  // repeat the same stair alert at most this often
+const CANNY_LOW = 50, CANNY_HIGH = 150;   // same thresholds used in training
+
+const stairsCanvas = document.createElement('canvas');
+const stairsCtx = stairsCanvas.getContext('2d', { willReadFrequently: true });
+
+async function loadStairsModel() {
+  if (stairsModel) return true;
+  try {
+    await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.10/wasm/tflite_web_api_client.js');
+    await loadScript('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.10/dist/tf-tflite.min.js');
+    tflite.setWasmPath('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.10/wasm/');
+    const m = await tflite.loadTFLiteModel(STAIRS_MODEL_URL);
+    // Find which input is the RGB branch (3 channels) and which is the edge branch (1)
+    const info = { rgb: -1, edge: -1, size: 224 };
+    m.inputs.forEach((inp, i) => {
+      const s = inp.shape;
+      const ch = s[s.length - 1];
+      if (ch === 3) { info.rgb = i; info.size = s[1] || 224; }
+      else if (ch === 1) info.edge = i;
+    });
+    if (info.rgb < 0 || info.edge < 0) throw new Error('unexpected model inputs');
+    stairsIn = info;
+    stairsModel = m;
+    return true;
+  } catch (e) {
+    console.warn('Stair model failed to load:', e);
+    stairsModel = null;
+    return false;
+  }
+}
+
+// Canny edge detector matching OpenCV's cv2.Canny(gray, 50, 150):
+// 5x5 Gaussian blur, 3x3 Sobel, |gx|+|gy| magnitude, non-max suppression,
+// double threshold with hysteresis. Returns Float32Array of 0 / 1.
+function cannyEdges(rgba, w, h) {
+  const n = w * h;
+  const gray = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    gray[i] = 0.299 * rgba[i*4] + 0.587 * rgba[i*4+1] + 0.114 * rgba[i*4+2];
+  }
+  // Separable Gaussian blur, 5 taps, sigma 1.1 (OpenCV's default for ksize 5)
+  const sigma = 1.1, k = [];
+  let ks = 0;
+  for (let i = -2; i <= 2; i++) { const v = Math.exp(-(i*i) / (2*sigma*sigma)); k.push(v); ks += v; }
+  for (let i = 0; i < 5; i++) k[i] /= ks;
+  const cl = (v, m) => v < 0 ? 0 : v >= m ? m - 1 : v;
+  const tmp = new Float32Array(n), blur = new Float32Array(n);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0;
+    for (let i = -2; i <= 2; i++) s += k[i+2] * gray[y*w + cl(x+i, w)];
+    tmp[y*w + x] = s;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let s = 0;
+    for (let i = -2; i <= 2; i++) s += k[i+2] * tmp[cl(y+i, h)*w + x];
+    blur[y*w + x] = s;
+  }
+  // Sobel gradients
+  const gx = new Float32Array(n), gy = new Float32Array(n), mag = new Float32Array(n);
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y*w + x;
+    const a = blur[i-w-1], b = blur[i-w], c = blur[i-w+1];
+    const d = blur[i-1],                  f = blur[i+1];
+    const g = blur[i+w-1], hh = blur[i+w], j = blur[i+w+1];
+    const dx = (c + 2*f + j) - (a + 2*d + g);
+    const dy = (g + 2*hh + j) - (a + 2*b + c);
+    gx[i] = dx; gy[i] = dy; mag[i] = Math.abs(dx) + Math.abs(dy);
+  }
+  // Non-maximum suppression + classify strong / weak
+  const state = new Uint8Array(n);   // 0 none, 1 weak, 2 strong
+  const stack = [];
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const i = y*w + x, m = mag[i];
+    if (m <= CANNY_LOW) continue;
+    const ax = Math.abs(gx[i]), ay = Math.abs(gy[i]);
+    let n1, n2;
+    if (ay <= ax * 0.4142)       { n1 = mag[i-1];   n2 = mag[i+1]; }
+    else if (ay >= ax * 2.4142)  { n1 = mag[i-w];   n2 = mag[i+w]; }
+    else if ((gx[i] > 0) === (gy[i] > 0)) { n1 = mag[i-w-1]; n2 = mag[i+w+1]; }
+    else                         { n1 = mag[i-w+1]; n2 = mag[i+w-1]; }
+    if (m > n1 && m >= n2) {
+      if (m >= CANNY_HIGH) { state[i] = 2; stack.push(i); }
+      else state[i] = 1;
+    }
+  }
+  // Hysteresis: weak edges survive only if connected to a strong edge
+  const out = new Float32Array(n);
+  while (stack.length) {
+    const i = stack.pop();
+    if (out[i]) continue;
+    out[i] = 1;
+    for (const o of [-w-1, -w, -w+1, -1, 1, w-1, w, w+1]) {
+      const j = i + o;
+      if (j >= 0 && j < n && state[j] === 1 && !out[j]) stack.push(j);
+    }
+  }
+  return out;
+}
+
+// Returns { kind: 'up' | 'down', conf } for the current video frame
+async function classifyStairs() {
+  const S = stairsIn.size;
+  if (stairsCanvas.width !== S) { stairsCanvas.width = S; stairsCanvas.height = S; }
+  stairsCtx.drawImage(guardVideo, 0, 0, S, S);
+  const rgba = stairsCtx.getImageData(0, 0, S, S).data;
+
+  const rgb = new Float32Array(S * S * 3);
+  for (let i = 0; i < S * S; i++) {
+    rgb[i*3]   = rgba[i*4]   / 127.5 - 1;   // MobileNetV2 preprocessing -> [-1, 1]
+    rgb[i*3+1] = rgba[i*4+1] / 127.5 - 1;
+    rgb[i*3+2] = rgba[i*4+2] / 127.5 - 1;
+  }
+  const edge = cannyEdges(rgba, S, S);
+
+  const inputs = [];
+  inputs[stairsIn.rgb]  = tf.tensor(rgb,  [1, S, S, 3]);
+  inputs[stairsIn.edge] = tf.tensor(edge, [1, S, S, 1]);
+  let out = stairsModel.predict(inputs);
+  inputs.forEach(t => t.dispose());
+  const t = Array.isArray(out) ? out[0] : (out && out.dataSync ? out : Object.values(out)[0]);
+  const p = (await t.data())[0];          // probability of DESCENDING
+  (Array.isArray(out) ? out : [t]).forEach(x => x.dispose());
+  return p > 0.5 ? { kind: 'down', conf: p } : { kind: 'up', conf: 1 - p };
+}
+
+// Turn per-frame results into a stable state (majority of recent confident frames)
+function updateStairsState(res) {
+  stairsVotes.push(res.conf >= STAIRS_MIN_CONF ? res : null);
+  if (stairsVotes.length > STAIRS_VOTE_WINDOW) stairsVotes.shift();
+  const up   = stairsVotes.filter(v => v && v.kind === 'up');
+  const down = stairsVotes.filter(v => v && v.kind === 'down');
+  const win = up.length >= STAIRS_VOTES_NEEDED ? up : down.length >= STAIRS_VOTES_NEEDED ? down : null;
+  stairsState = win ? { kind: win[0].kind, conf: win.reduce((s, v) => s + v.conf, 0) / win.length } : null;
+}
+
+function maybeSpeakStairs(now) {
+  if (!stairsState) return;
+  if (now - lastDangerSpokenAt < PRESENCE_QUIET_AFTER_DANGER_MS) return;   // don't talk over a danger warning
+  const since = now - lastStairsSpokenAt;
+  const isNew = stairsState.kind !== lastStairsKind;
+  if (since < STAIRS_MIN_GAP_MS || (!isNew && since < STAIRS_REPEAT_MS)) return;
+  speak(stairsState.kind === 'up' ? 'Stairs going up ahead.'
+                                  : 'Stairs going down ahead. Be careful.', true);
+  lastStairsKind = stairsState.kind;
+  lastStairsSpokenAt = now;
+}
+
+// Free-space analysis: how much of the left vs right half of the view is
+// occupied. Each box's area is split by how much of it lies in each half,
+// so an object sitting centre-left counts mostly against the left side.
+// Only the five target classes are passed in.
+function sideObstacleScore(dets, frameWidth) {
+  const mid = frameWidth / 2;
+  let left = 0, right = 0;
+  for (const d of dets) {
+    const [x, , w, h] = d.bbox;
+    left  += Math.max(0, Math.min(x + w, mid) - x) * h;
+    right += Math.max(0, (x + w) - Math.max(x, mid)) * h;
+  }
+  return { left, right };
+}
+
+function chooseSafeSide(left, right) {
+  if (left < right) return 'left';
+  if (right < left) return 'right';
+  return 'either';
+}
+
+// ---- Distance --------------------------------------------------
+function focalLengthPx(frameW, frameH) {
+  // The rated FOV applies across the sensor's long side, whichever way
+  // the phone is held.
+  return (Math.max(frameW, frameH) / 2) / Math.tan(rad(CAMERA_FOV_LONG_SIDE_DEG) / 2);
+}
+
+function estimateDistanceM(cls, bbox, frameW, frameH) {
+  const size = TARGET_CLASSES[cls];
+  const [, y, w, h] = bbox;
+  const f = focalLengthPx(frameW, frameH);
+  let d = size.h * f / Math.max(h, 1);
+  // If the box is cut off by the top/bottom of the frame, the visible
+  // height is shorter than the real object and the estimate reads too
+  // far. Use the width-based estimate too and keep the nearer (safer) one.
+  const edge = 0.02;
+  if (y <= frameH * edge || y + h >= frameH * (1 - edge)) {
+    d = Math.min(d, size.w * f / Math.max(w, 1));
+  }
+  return d;
+}
+
+function fmtMetres(d) {
+  return d < 10 ? String(Number(d.toFixed(1))) : String(Math.round(d));
+}
+
+// ---- Tracking across consecutive frames ------------------------
+function iou(a, b) {
+  const x1 = Math.max(a[0], b[0]), y1 = Math.max(a[1], b[1]);
+  const x2 = Math.min(a[0] + a[2], b[0] + b[2]), y2 = Math.min(a[1] + a[3], b[1] + b[3]);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = a[2] * a[3] + b[2] * b[3] - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+// Match this frame's detections to existing tracks (same class, best box
+// overlap). Sets det.track and det.dist (smoothed distance).
+function updateTracks(dets, now) {
+  const free = new Set(tracks);
+  for (const d of [...dets].sort((a, b) => b.score - a.score)) {
+    let best = null, bestIou = TRACK_MATCH_MIN_IOU;
+    for (const t of free) {
+      if (t.cls !== d.cls) continue;
+      const v = iou(t.bbox, d.bbox);
+      if (v > bestIou) { bestIou = v; best = t; }
+    }
+    if (best) {
+      free.delete(best);
+      best.dist += DIST_SMOOTHING * (d.rawDist - best.dist);
+    } else {
+      best = { cls: d.cls, dist: d.rawDist, history: [], inDanger: false,
+               presenceAnnounced: false, lastDangerAt: 0,
+               lastDangerDist: Infinity, lastSide: null };
+      tracks.push(best);
+    }
+    best.bbox = d.bbox;
+    best.lastSeen = now;
+    best.history.push({ t: now, d: d.rawDist });
+    while (best.history.length && best.history[0].t < now - TRACK_WINDOW_MS) best.history.shift();
+    d.track = best;
+    d.dist = best.dist;
+  }
+  tracks = tracks.filter(t => now - t.lastSeen <= TRACK_MAX_AGE_MS);
+}
+
+// Rate the gap is shrinking (m/s, positive = getting closer), from a
+// least-squares fit over the track's recent distance history. null if
+// there isn't enough history to say.
+function closingSpeedMps(track) {
+  const h = track.history;
+  if (h.length < TRACK_MIN_SAMPLES) return null;
+  if (h[h.length - 1].t - h[0].t < TRACK_MIN_SPAN_MS) return null;
+  let mt = 0, md = 0;
+  for (const s of h) { mt += s.t; md += s.d; }
+  mt /= h.length; md /= h.length;
+  let num = 0, den = 0;
+  for (const s of h) { num += (s.t - mt) * (s.d - md); den += (s.t - mt) ** 2; }
+  if (den === 0) return null;
+  return -(num / den) * 1000;
+}
+
+// ---- User / camera motion (ego-motion) -------------------------
+// A shrinking gap could be the object moving OR the user walking toward
+// it. The phone's motion sensors tell us which, so we only claim the
+// object is "coming towards you" when the user's movement can't explain it.
+let egoSamples = [];
+let egoListening = false;
+
+function onDeviceMotion(e) {
+  let mag = null;
+  const a = e.acceleration, ag = e.accelerationIncludingGravity;
+  if (a && a.x != null) mag = Math.hypot(a.x || 0, a.y || 0, a.z || 0);
+  else if (ag && ag.x != null) mag = Math.abs(Math.hypot(ag.x || 0, ag.y || 0, ag.z || 0) - 9.81);
+  if (mag == null) return;
+  const r = e.rotationRate;
+  const rot = r ? Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0) : 0;
+  const now = Date.now();
+  egoSamples.push({ t: now, mag, rot });
+  while (egoSamples.length && egoSamples[0].t < now - EGO_WINDOW_MS) egoSamples.shift();
+}
+
+function startEgoMotion() {
+  if (egoListening) return;
+  const DME = window.DeviceMotionEvent;
+  if (!DME) return;
+  const listen = () => {
+    window.addEventListener('devicemotion', onDeviceMotion);
+    egoListening = true;
+  };
+  if (typeof DME.requestPermission === 'function') {
+    // iOS: must be requested straight from the button tap, before any await
+    DME.requestPermission().then(r => { if (r === 'granted') listen(); }).catch(() => {});
+  } else {
+    listen();
+  }
+}
+
+function stopEgoMotion() {
+  window.removeEventListener('devicemotion', onDeviceMotion);
+  egoListening = false;
+  egoSamples = [];
+}
+
+// 'still' | 'walking' | 'turning' | 'unknown'
+function getEgoMotion() {
+  const n = egoSamples.length;
+  if (n < 10 || Date.now() - egoSamples[n - 1].t > 500) return 'unknown';
+  let sumSq = 0, sumRot = 0;
+  for (const s of egoSamples) { sumSq += s.mag * s.mag; sumRot += s.rot; }
+  if (sumRot / n > EGO_TURN_DEG_S) return 'turning';
+  if (Math.sqrt(sumSq / n) > EGO_WALK_ACCEL_RMS) return 'walking';
+  return 'still';
+}
+
+function isObjectApproaching(track) {
+  const closing = closingSpeedMps(track);
+  if (closing == null) return false;
+  const ego = getEgoMotion();
+  if (ego === 'still')   return closing > OBJECT_APPROACH_MIN_MPS;
+  // Walking: the gap can close by up to walking pace on its own
+  if (ego === 'walking') return closing > USER_WALK_MAX_MPS + OBJECT_APPROACH_MIN_MPS;
+  return false;   // turning / unknown -> can't attribute motion reliably
+}
+
+// ---- Alerts ----------------------------------------------------
+// Spoken aloud, e.g. "Person 1 metre ahead, very close to you, move left."
+function buildDangerAlert(label, dist, side, approaching) {
+  const m = fmtMetres(dist);
+  const unit = m === '1' ? 'metre' : 'metres';
+  const state = approaching ? 'coming towards you' : 'very close to you';
+  const action = side === 'either' ? 'be careful' : `move ${side}`;
+  return `${label} ${m} ${unit} ahead, ${state}, ${action}.`;
+}
+
+function maybeSpeakDanger(det, dets, frameW, now) {
+  const t = det.track;
+  const label = TARGET_CLASSES[det.cls].label;
+
+  const { left, right } = sideObstacleScore(dets, frameW);
+  let side = chooseSafeSide(left, right);
+  // Don't flip-flop left/right when both sides are nearly equally blocked
+  if (t.lastSide && side !== t.lastSide &&
+      Math.abs(left - right) < SIDE_SWITCH_MARGIN * Math.max(left, right)) {
+    side = t.lastSide;
+  }
+
+  const text = buildDangerAlert(label, det.dist, side, isObjectApproaching(t));
+  const changed = t.lastDangerAt === 0 || side !== t.lastSide ||
+                  (t.lastDangerDist - det.dist) >= SIGNIFICANT_DIST_DROP_M;
+  const due = changed ? now - lastDangerSpokenAt >= DANGER_MIN_GAP_MS
+                      : now - t.lastDangerAt >= DANGER_COOLDOWN_MS;
+  if (!due) return;
+
+  speak(text, true);
+  t.lastDangerAt = now;
+  t.lastDangerDist = det.dist;
+  t.lastSide = side;
+  t.presenceAnnounced = true;   // no "Car ahead." straight after a warning
+  lastDangerSpokenAt = now;
+}
+
+function maybeSpeakPresence(dets, now) {
+  if (now - lastDangerSpokenAt < PRESENCE_QUIET_AFTER_DANGER_MS) return;
+  const ahead = dets
+    .filter(d => d.inPath && !d.track.inDanger && !d.track.presenceAnnounced)
+    .sort((a, b) => a.dist - b.dist)[0];
+  if (!ahead) return;
+  // Already announced this class recently (e.g. same person re-detected)
+  ahead.track.presenceAnnounced = true;
+  if (now - (lastPresenceAt[ahead.cls] || 0) < PRESENCE_COOLDOWN_MS) return;
+
+  const label = TARGET_CLASSES[ahead.cls].label;
+  speak(`${label} ahead.`, true, `${label} ${fmtMetres(ahead.dist)} metres ahead.`);
+  lastPresenceAt[ahead.cls] = now;
+}
+
+// On-screen list of every target object in view with its distance
+function renderDetections(dets) {
+  detectionsEl.textContent = '';
+  if (stairsState) {
+    const row = document.createElement('div');
+    row.className = 'danger';
+    row.textContent = `Stairs going ${stairsState.kind === 'up' ? 'up' : 'down'} ` +
+                      `(${Math.round(stairsState.conf * 100)}%)`;
+    detectionsEl.appendChild(row);
+  }
+  if (dets.length === 0) {
+    if (!stairsState) detectionsEl.textContent = 'No person, car, bicycle, truck, dog or stairs in view.';
+    return;
+  }
+  for (const d of [...dets].sort((a, b) => a.dist - b.dist)) {
+    const row = document.createElement('div');
+    const where = d.inPath ? 'ahead' : (d.side === 'left' ? 'to the left' : 'to the right');
+    row.textContent = `${TARGET_CLASSES[d.cls].label} ${fmtMetres(d.dist)} metres ${where}`;
+    if (d.inPath) row.className = d.track.inDanger ? 'danger' : 'inpath';
+    detectionsEl.appendChild(row);
+  }
+}
+
+async function guardTick() {
+  if (!guardActive || !guardModel || guardBusy || guardVideo.readyState < 2) return;
+  const frameW = guardVideo.videoWidth;
+  const frameH = guardVideo.videoHeight;
+  if (!frameW || !frameH) return;
+
+  // Skip this tick if the previous detection is still running
+  guardBusy = true;
+  let predictions = null;
+  try { predictions = await guardModel.detect(guardVideo, DETECT_MAX_BOXES, DETECT_MIN_SCORE); }
+  catch (_) {}
+  // Stair classification on every Nth tick (own try/catch: never breaks object alerts)
+  if (stairsModel && guardActive && ++stairsTickCount % STAIRS_EVERY_N_TICKS === 0) {
+    try { updateStairsState(await classifyStairs()); }
+    catch (e) { console.warn('Stair classification failed:', e); }
+  }
+  guardBusy = false;
+  if (!guardActive || !predictions) return;
+
+  const now = Date.now();
+  const lo = 0.5 - CENTRAL_ZONE / 2, hi = 0.5 + CENTRAL_ZONE / 2;
+
+  // Keep ONLY person / car / bicycle / truck / dog
+  const dets = predictions
+    .filter(p => Object.prototype.hasOwnProperty.call(TARGET_CLASSES, p.class))
+    .map(p => {
+      const [x, , w] = p.bbox;
+      const cx = (x + w / 2) / frameW;
+      return {
+        cls: p.class, bbox: p.bbox, score: p.score,
+        inPath: cx >= lo && cx <= hi,
+        side: cx < 0.5 ? 'left' : 'right',
+        rawDist: estimateDistanceM(p.class, p.bbox, frameW, frameH),
+      };
+    });
+
+  updateTracks(dets, now);
+  for (const d of dets) {
+    const t = d.track;
+    t.inDanger = d.inPath && (d.dist <= DANGER_DISTANCE_M ||
+                 (t.inDanger && d.dist <= DANGER_DISTANCE_M + DANGER_HYSTERESIS_M));
+    if (!d.inPath) t.presenceAnnounced = false;
+  }
+  renderDetections(dets);
+
+  // Danger (nearest in-path object within 2 m) always beats presence
+  const danger = dets.filter(d => d.track.inDanger).sort((a, b) => a.dist - b.dist)[0];
+  if (danger) maybeSpeakDanger(danger, dets, frameW, now);
+  else {
+    maybeSpeakPresence(dets, now);
+    maybeSpeakStairs(now);
+  }
+}
+
+async function startGuard() {
+  startEgoMotion();   // before any await, so iOS accepts the permission request
+  try {
+    speak('Starting proximity alert.', true);
+    await ensureGuardScripts();
+    if (!guardModel) guardModel = await cocoSsd.load();
+    const stairsOk = await loadStairsModel();   // optional: object alerts still work without it
+    guardStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+    guardVideo.srcObject = guardStream;
+    await guardVideo.play();
+    guardActive = true;
+    resetGuardHistory();
+    guardTimer = setInterval(guardTick, GUARD_DETECT_INTERVAL_MS);
+    document.getElementById('btnGuard').textContent = 'Proximity alert: On (tap to stop)';
+    document.getElementById('btnGuard').classList.add('guard-on');
+    guardVideo.classList.add('visible');
+    detectionsEl.classList.add('visible');
+    speak(stairsOk
+      ? 'Proximity alert is on. Watching for people, cars, bicycles, trucks, dogs and stairs ahead of you.'
+      : 'Proximity alert is on. Watching for people, cars, bicycles, trucks and dogs ahead of you. Stair detection could not load.', true);
+  } catch (e) {
+    speak('Could not start the camera for proximity alert. Check camera permission.', true);
+    stopGuard(false);
+  }
+}
+
+function stopGuard(announce = true) {
+  guardActive = false;
+  if (guardTimer) { clearInterval(guardTimer); guardTimer = null; }
+  if (guardStream) { guardStream.getTracks().forEach(t => t.stop()); guardStream = null; }
+  stopEgoMotion();
+  resetGuardHistory();
+  detectionsEl.classList.remove('visible');
+  detectionsEl.textContent = '';
+  document.getElementById('btnGuard').textContent = 'Proximity alert';
+  document.getElementById('btnGuard').classList.remove('guard-on');
+  guardVideo.classList.remove('visible');
+  if (announce) speak('Proximity alert stopped.', true);
+}
+
+document.getElementById('btnGuard').addEventListener('click', () => {
+  if (guardActive) stopGuard(true); else startGuard();
+});
+</script>
+</body>
+</html>
